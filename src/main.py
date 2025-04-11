@@ -1,16 +1,24 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-from routers.customer_router import router as customer_router
+from starlette.middleware.base import BaseHTTPMiddleware
+from routers import customer, project, linking
 import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Middleware for CORS
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Middleware for logging
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        logger.info(f"Request: {request.method} {request.url}")
+        response = await call_next(request)
+        logger.info(f"Response: {response.status_code}")
+        return response
+
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allows all origins
@@ -19,15 +27,14 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# Middleware for HTTPS redirect
-app.add_middleware(HTTPSRedirectMiddleware)
+# Add logging middleware
+app.add_middleware(LoggingMiddleware)
 
-# Include the customer router
-app.include_router(customer_router, prefix="/customers", tags=["customers"])
+# Include routers
+app.include_router(customer.router, prefix="/customers", tags=["customers"])
+app.include_router(project.router, prefix="/projects", tags=["projects"])
+app.include_router(linking.router, prefix="/linking", tags=["linking"])
 
-@app.middleware("http")
-async def log_requests(request, call_next):
-    logger.info(f"Incoming request: {request.method} {request.url}")
-    response = await call_next(request)
-    logger.info(f"Response status: {response.status_code}")
-    return response
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the FastAPI application!"}
