@@ -1,24 +1,17 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from routers import customer, project, linking
+from routers import timesheet_router
 import logging
 
-app = FastAPI()
-
-# Set up logging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Middleware for logging
-class LoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        logger.info(f"Request: {request.method} {request.url}")
-        response = await call_next(request)
-        logger.info(f"Response: {response.status_code}")
-        return response
+app = FastAPI()
 
-# Add CORS middleware
+# Middleware for CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allows all origins
@@ -27,14 +20,25 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# Add logging middleware
+# Middleware for HTTPS redirect
+app.add_middleware(HTTPSRedirectMiddleware)
+
+# Custom middleware for logging requests
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        logger.info(f"Request: {request.method} {request.url}")
+        response = await call_next(request)
+        logger.info(f"Response status: {response.status_code}")
+        return response
+
 app.add_middleware(LoggingMiddleware)
 
-# Include routers
-app.include_router(customer.router, prefix="/customers", tags=["customers"])
-app.include_router(project.router, prefix="/projects", tags=["projects"])
-app.include_router(linking.router, prefix="/linking", tags=["linking"])
+app.include_router(timesheet_router.router)
 
 @app.get("/")
-async def root():
-    return {"message": "Welcome to the FastAPI application!"}
+async def read_root():
+    return {"Hello": "World"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
