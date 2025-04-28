@@ -1,47 +1,75 @@
 ```python
-from datetime import datetime
-import json
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_bcrypt import Bcrypt
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required
+from itsdangerous import URLSafeTimedSerializer
+import logging
 
-class AuditTrail:
-    def __init__(self):
-        self.logs = []
-        self.admin_users = set()
-    
-    def log_activity(self, user_id, action):
-        timestamp = datetime.now().isoformat()
-        self.logs.append({'timestamp': timestamp, 'user_id': user_id, 'action': action})
-    
-    def add_admin_user(self, user_id):
-        self.admin_users.add(user_id)
-    
-    def get_logs(self, user_id, filters=None):
-        if user_id not in self.admin_users:
-            raise PermissionError("Access denied")
-        
-        filtered_logs = self.logs
-        if filters:
-            if 'date' in filters:
-                filtered_logs = [log for log in filtered_logs if log['timestamp'].startswith(filters['date'])]
-            if 'user' in filters:
-                filtered_logs = [log for log in filtered_logs if log['user_id'] == filters['user']]
-            if 'action' in filters:
-                filtered_logs = [log for log in filtered_logs if log['action'] == filters['action']]
-        
-        return filtered_logs
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['JWT_SECRET_KEY'] = 'your_jwt_secret_key'
+app.config['SECURITY_PASSWORD_SALT'] = 'your_password_salt'
+db = SQLAlchemy(app)
+bcrypt = Bcrypt(app)
+jwt = JWTManager(app)
+serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
-    def save_logs(self, filepath):
-        with open(filepath, 'w') as f:
-            json.dump(self.logs, f, indent=4)
+logging.basicConfig(filename='auth.log', level=logging.INFO)
 
-    def load_logs(self, filepath):
-        with open(filepath, 'r') as f:
-            self.logs = json.load(f)
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(120), nullable=False)
+    mfa_secret = db.Column(db.String(120), nullable=True)
 
-# Example usage
-audit_trail = AuditTrail()
-audit_trail.add_admin_user('admin1')
-audit_trail.log_activity('user1', 'login')
-audit_trail.log_activity('user2', 'create_project')
-logs = audit_trail.get_logs('admin1', filters={'action': 'login'})
-audit_trail.save_logs('audit_logs.json')
+def encrypt_data(data):
+    return bcrypt.generate_password_hash(data).decode('utf-8')
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    hashed_password = encrypt_data(data['password'])
+    new_user = User(username=data['username'], password=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify(message="User registered successfully"), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    user = User.query.filter_by(username=data['username']).first()
+    if user and bcrypt.check_password_hash(user.password, data['password']):
+        access_token = create_access_token(identity={'username': user.username})
+        logging.info(f"Successful login for user: {user.username}")
+        return jsonify(access_token=access_token), 200
+    logging.warning(f"Failed login attempt for user: {data['username']}")
+    return jsonify(message="Invalid credentials"), 401
+
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    data = request.get_json()
+    user = User.query.filter_by(username=data['username']).first()
+    if user:
+        token = serializer.dumps(user.username, salt=app.config['SECURITY_PASSWORD_SALT'])
+        # Send token via email (omitted for brevity)
+        return jsonify(message="Password reset link sent"), 200
+    return jsonify(message="User not found"), 404
+
+@app.route('/reset-password/<token>', methods=['POST'])
+def confirm_reset_password(token):
+    try:
+        username = serializer.loads(token, salt=app.config['SECURITY_PASSWORD_SALT'], max_age=3600)
+        user = User.query.filter_by(username=username).first()
+        if user:
+            data = request.get_json()
+            user.password = encrypt_data(data['new_password'])
+            db.session.commit()
+            return jsonify(message="Password reset successful"), 200
+    except Exception:
+        return jsonify(message="Invalid or expired token"), 400
+
+if __name__ == '__main__':
+    db.create_all()
+    app.run(debug=True)
 ```
